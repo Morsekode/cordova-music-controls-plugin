@@ -1,4 +1,5 @@
 # Cordova Music Controls Plugin
+This has been modified from the orginal at https://github.com/homerours/cordova-music-controls-plugin.  In android I need it to run as a service.  Don't assume any code here is perfect or in working order.
 
 <img src='https://imgur.com/fh3ACOq.png' width='564' height='342'>
 
