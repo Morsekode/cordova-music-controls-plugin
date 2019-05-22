@@ -1,6 +1,6 @@
 package com.homerours.musiccontrols;
 
-import org.apache.cordova.CordovaInterface;
+
 
 
 import java.io.BufferedInputStream;
@@ -11,6 +11,11 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Random;
 
+import android.annotation.SuppressLint;
+import android.app.Service;
+import android.os.Binder;
+import android.os.IBinder;
+import android.os.PowerManager;
 import android.util.Log;
 import android.R;
 import android.content.Context;
@@ -27,7 +32,11 @@ import android.net.Uri;
 
 import android.app.NotificationChannel;
 
-public class MusicControlsNotification {
+import org.json.JSONObject;
+
+import static android.os.PowerManager.PARTIAL_WAKE_LOCK;
+
+public class MusicControlsNotification extends Service {
 	private Activity cordovaActivity;
 	private NotificationManager notificationManager;
 	private Notification.Builder notificationBuilder;
@@ -35,8 +44,21 @@ public class MusicControlsNotification {
 	private MusicControlsInfos infos;
 	private Bitmap bitmapCover;
 	private String CHANNEL_ID;
+	private static final String TAG = "MyActivity";
+
+	// Binder given to clients
+	private final IBinder binder = new MusicControlsBinder();
+
+	// Partial wake lock to prevent the app from going to sleep when locked
+	private PowerManager.WakeLock wakeLock;
+
+	private Notification theNotification;
 
 	// Public Constructor
+	public MusicControlsNotification() {
+
+	}
+
 	public MusicControlsNotification(Activity cordovaActivity,int id){
 		this.CHANNEL_ID ="cordova-music-channel-id";
 		this.notificationID = id;
@@ -59,36 +81,184 @@ public class MusicControlsNotification {
 			mChannel.setDescription(description);
 
 			this.notificationManager.createNotificationChannel(mChannel);
-    }
+		}
 
 	}
 
+	private Notification makeNotification ()
+	{
+		// use channelid for Oreo and higher
+		String CHANNEL_ID = "cordova-music-channel-id";
+		if(Build.VERSION.SDK_INT >= 26){
+			// The user-visible name of the channel.
+			CharSequence name = "cordova-music-controls-plugin";
+			// The user-visible description of the channel.
+			String description = "cordova-music-controls-plugin notification";
+
+			int importance = NotificationManager.IMPORTANCE_LOW;
+
+			NotificationChannel mChannel = new NotificationChannel(CHANNEL_ID, name,importance);
+
+			// Configure the notification channel.
+			mChannel.setDescription(description);
+
+			getNotificationManager().createNotificationChannel(mChannel);
+		}
+		String title    ="test";
+		String text     = "test";
+		boolean bigText = false;
+
+		Context context = getApplicationContext();
+		String pkgName  = context.getPackageName();
+		Intent intent   = context.getPackageManager()
+				.getLaunchIntentForPackage(pkgName);
+
+		Notification.Builder notification = new Notification.Builder(context)
+				.setContentTitle(title)
+				.setContentText(text)
+				.setOngoing(true);
+		//.setSmallIcon(getIconResId(settings));
+
+		if(Build.VERSION.SDK_INT >= 26){
+			notification.setChannelId(CHANNEL_ID);
+		}
+
+		//if (settings.optBoolean("hidden", true)) {
+		//	notification.setPriority(Notification.PRIORITY_MIN);
+		//}
+
+		if (bigText || text.contains("\n")) {
+			notification.setStyle(
+					new Notification.BigTextStyle().bigText(text));
+		}
+
+		//setColor(notification, settings);
+
+		intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+		PendingIntent contentIntent = PendingIntent.getActivity(
+				context, this.notificationID, intent,
+				PendingIntent.FLAG_UPDATE_CURRENT);
+
+
+		notification.setContentIntent(contentIntent);
+
+		return notification.build();
+	}
+
+	/**
+	 * Allow clients to call on to the service.
+	 */
+	@Override
+	public IBinder onBind (Intent intent) {
+		return binder;
+	}
+
+	/**
+	 * Class used for the client Binder.  Because we know this service always
+	 * runs in the same process as its clients, we don't need to deal with IPC.
+	 */
+	class MusicControlsBinder extends Binder
+	{
+		MusicControlsNotification getService()
+		{
+			// Return this instance of ForegroundService
+			// so clients can call public methods
+			return MusicControlsNotification.this;
+		}
+	}
+
+	/**
+	 * Put the service in a foreground state to prevent app from being killed
+	 * by the OS.
+	 */
+	@Override
+	public void onCreate()
+	{
+		Log.v(TAG, "being created!!!!!!!!!!!");
+		super.onCreate();
+		keepAwake();
+	}
+
+	/**
+	 * No need to run headless on destroy.
+	 */
+	@Override
+	public void onDestroy()
+	{
+		Log.v(TAG, "being destroyed!!!!!!!!!!!");
+		super.onDestroy();
+
+		sleepWell();
+	}
+
+	/**
+	 * Prevent Android from stopping the background service automatically.
+	 */
+	@Override
+	public int onStartCommand (Intent intent, int flags, int startId) {
+		return START_STICKY;
+	}
+
+	/**
+	 * Put the service in a foreground state to prevent app from being killed
+	 * by the OS.
+	 */
+	@SuppressLint("WakelockTimeout")
+	private void keepAwake()
+	{
+		Log.v(TAG, "Do the awake thing");
+		startForeground(this.notificationID, makeNotification());
+
+		PowerManager pm = (PowerManager)getSystemService(POWER_SERVICE);
+
+		wakeLock = pm.newWakeLock(
+				PARTIAL_WAKE_LOCK, "MusicControls:wakelock");
+
+		wakeLock.acquire();
+	}
+
+	/**
+	 * Stop background mode.
+	 */
+	private void sleepWell()
+	{
+		stopForeground(true);
+		//this.destroy();
+
+		if (wakeLock != null) {
+			wakeLock.release();
+			wakeLock = null;
+		}
+	}
+
+
 	// Show or update notification
 	public void updateNotification(MusicControlsInfos newInfos){
-		// Check if the cover has changed	
+		// Check if the cover has changed
 		if (!newInfos.cover.isEmpty() && (this.infos == null || !newInfos.cover.equals(this.infos.cover))){
 			this.getBitmapCover(newInfos.cover);
 		}
 		this.infos = newInfos;
 		this.createBuilder();
-		Notification noti = this.notificationBuilder.build();
-		this.notificationManager.notify(this.notificationID, noti);
+		this.theNotification = this.notificationBuilder.build();
+
+		this.notificationManager.notify(this.notificationID, this.theNotification);
 	}
 
 	// Toggle the play/pause button
 	public void updateIsPlaying(boolean isPlaying){
 		this.infos.isPlaying=isPlaying;
 		this.createBuilder();
-		Notification noti = this.notificationBuilder.build();
-		this.notificationManager.notify(this.notificationID, noti);
+		this.theNotification = this.notificationBuilder.build();
+		this.notificationManager.notify(this.notificationID, this.theNotification);
 	}
 
 	// Toggle the dismissable status
 	public void updateDismissable(boolean dismissable){
 		this.infos.dismissable=dismissable;
 		this.createBuilder();
-		Notification noti = this.notificationBuilder.build();
-		this.notificationManager.notify(this.notificationID, noti);
+		this.theNotification = this.notificationBuilder.build();
+		this.notificationManager.notify(this.notificationID, this.theNotification);
 	}
 
 	// Get image from url
@@ -175,7 +345,7 @@ public class MusicControlsNotification {
 		if (!infos.ticker.isEmpty()){
 			builder.setTicker(infos.ticker);
 		}
-		
+
 		builder.setPriority(Notification.PRIORITY_MAX);
 
 		//If 5.0 >= set the controls to be visible on lockscreen
@@ -277,5 +447,13 @@ public class MusicControlsNotification {
 
 	public void destroy(){
 		this.notificationManager.cancel(this.notificationID);
+	}
+
+	/**
+	 * Returns the shared notification service manager.
+	 */
+	private NotificationManager getNotificationManager()
+	{
+		return (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
 	}
 }
